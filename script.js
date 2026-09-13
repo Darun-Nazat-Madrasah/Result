@@ -1,522 +1,91 @@
-// ফলাফল ডাটা: ২০২৬ সালের দ্বিতীয় সাময়িক পরীক্ষা
-const students = [];
-let currentPersonalStudent = null;
+const sb = (window.supabase && window.SUPABASE_URL && window.SUPABASE_ANON_KEY)
+  ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY) : null;
 
-const yearSelect = document.getElementById("resultYear");
-const exam = document.getElementById("exam");
-const className = document.getElementById("className");
-const form = document.getElementById("resultForm");
-const message = document.getElementById("message");
-const resultArea = document.getElementById("resultArea");
-const personalPanel = document.getElementById("personalPanel");
-const classPanel = document.getElementById("classPanel");
-const classYear = document.getElementById("classYear");
-const classWiseExam = document.getElementById("classWiseExam");
-const classWiseName = document.getElementById("classWiseName");
-const classWiseResult = document.getElementById("classWiseResult");
-const aplusPanel = document.getElementById("aplusPanel");
-const aplusResult = document.getElementById("aplusResult");
-const aplusMeta = document.getElementById("aplusMeta");
-const listForm = document.getElementById("listForm");
-const listType = document.getElementById("listType");
-const listYear = document.getElementById("listYear");
-const listExam = document.getElementById("listExam");
-const listPrintRow = document.getElementById("listPrintRow");
-const menu = document.getElementById("mobileMenu");
-const overlay = document.getElementById("menuOverlay");
+const money = n => `৳ ${Number(n || 0).toLocaleString('bn-BD', {minimumFractionDigits: 0, maximumFractionDigits: 2})}`;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+const nowDate = () => new Date().toISOString().slice(0,10);
+let members=[], annual=[], notices=[], history=[];
+let admin=false;
 
-document.getElementById("year").textContent = "২০২৬";
+function msg(text, ok=false){ const el=document.querySelector('#message'); if(el){el.textContent=text; el.className=ok?'ok':'error';} }
+function show(el, yes=true){document.querySelector(el)?.classList.toggle('hidden',!yes)}
 
-async function loadResultData(){
-  try{
-    const res=await fetch("data/results.json?ts="+Date.now(),{cache:"no-store"});
-    if(!res.ok) throw new Error("Could not load result data");
-    const data=await res.json();
-    students.length=0;
-    students.push(...(Array.isArray(data) ? data : (data.students||[])));
-    loadYears();
-  }catch(err){
-    console.error(err);
-    message.textContent="ফলাফল ডাটা লোড করা যায়নি। অনুগ্রহ করে কিছুক্ষণ পরে আবার চেষ্টা করুন।";
-    message.className="message error";
-  }
+async function loadPublic(){
+  if(!sb){msg('Supabase config পাওয়া যায়নি।');return;}
+  const [m,y,a,h,n]=await Promise.all([
+    sb.from('public_member_accounts').select('member_id,name,father_name,total_deposit,total_due').order('name'),
+    sb.from('public_yearly_summary').select('*').order('year'),
+    sb.from('public_all_years_summary').select('*').maybeSingle(),
+    sb.from('public_payment_history').select('*').order('year',{ascending:false}).order('month',{ascending:false}),
+    sb.from('public_notices').select('*').order('publish_date',{ascending:false})
+  ]);
+  const err=[m,y,a,h,n].find(x=>x.error); if(err){console.error(err.error);msg('ডাটাবেস থেকে তথ্য লোড করা যায়নি।');return;}
+  members=m.data||[]; annual=y.data||[]; history=h.data||[]; notices=n.data||[];
+  renderPublic(a.data||{}); renderMembers(); renderYears(); renderHistory(); renderNotices(); fillYears();
 }
-
-const bnDigits = "০১২৩৪৫৬৭৮৯";
-function bnNum(v){ return String(v ?? "").replace(/\d/g, d => bnDigits[d]); }
-function unique(list){ return [...new Set(list)]; }
-function fillSelect(select, values, placeholder){
-  select.innerHTML = `<option value="">${placeholder}</option>`;
-  values.forEach(v => {
-    const opt=document.createElement("option");
-    opt.value=v.value ?? v; opt.textContent=v.label ?? v;
-    select.appendChild(opt);
-  });
+function renderPublic(all){
+  const totalDeposit=Number(all.total_deposit||members.reduce((s,x)=>s+Number(x.total_deposit||0),0));
+  const totalDue=Number(all.total_due||members.reduce((s,x)=>s+Number(x.total_due||0),0));
+  document.querySelector('#activeMembers').textContent=members.length.toLocaleString('bn-BD');
+  document.querySelector('#totalDeposit').textContent=money(totalDeposit);
+  document.querySelector('#totalDue').textContent=money(totalDue);
+  document.querySelector('#totalProfit').textContent=money(all.total_profit||annual.reduce((s,x)=>s+Number(x.total_profit||0),0));
+  document.querySelector('#totalExpense').textContent=money(all.total_expense||annual.reduce((s,x)=>s+Number(x.total_expense||0),0));
+  document.querySelector('#currentBalance').textContent=money(all.current_balance||0);
 }
-function esc(v){
-  return String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+function renderMembers(){
+  const q=(document.querySelector('#search')?.value||'').trim().toLowerCase();
+  const rows=members.filter(x=>`${x.name} ${x.father_name||''}`.toLowerCase().includes(q));
+  document.querySelector('#memberRows').innerHTML=rows.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.father_name||'-')}</td><td>${money(x.total_deposit)}</td><td>${money(x.total_due)}</td></tr>`).join('')||'<tr><td colspan="4">কোনো সদস্য পাওয়া যায়নি</td></tr>';
 }
-
-const examOptions = [
-  {value:"First Term Exam", label:"প্রথম সাময়িক পরীক্ষা"},
-  {value:"Second Term Exam", label:"দ্বিতীয় সাময়িক পরীক্ষা"},
-  {value:"Annual Exam", label:"বার্ষিক পরীক্ষা"}
-];
-
-function getYears(){
-  return unique(students.map(s => String(s.year || "2026"))).sort((a,b)=>Number(b)-Number(a));
+function renderYears(){
+  document.querySelector('#yearRows').innerHTML=annual.map(x=>`<tr><td>${x.year}</td><td>${money(x.total_deposit)}</td><td>${money(x.total_due)}</td><td>${money(x.total_profit)}</td><td>${money(x.total_expense)}</td><td>${money(x.total_investment)}</td></tr>`).join('')||'<tr><td colspan="6">এখনও কোনো বছরের হিসাব নেই</td></tr>';
 }
-function getClasses(year){
-  return unique(students.filter(s=>String(s.year||"")===String(year)).map(s=>s.className)).map(c=>{
-    const f=students.find(s=>String(s.year||"")===String(year)&&s.className===c);
-    return {value:c,label:f?.classBn || c};
-  });
+function renderHistory(){
+  document.querySelector('#historyRows').innerHTML=history.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.year}</td><td>${Number(x.month).toLocaleString('bn-BD')}</td><td>${money(x.required_amount)}</td><td>${money(x.paid_amount)}</td><td>${money(x.due_amount)}</td><td>${x.payment_date||'-'}</td></tr>`).join('')||'<tr><td colspan="7">এখনও কোনো জমার তথ্য নেই</td></tr>';
 }
-function loadYears(){
-  const years=getYears().map(y=>({value:y,label:bnNum(y)}));
-  fillSelect(yearSelect,years,"-- সাল নির্বাচন করুন --");
-  fillSelect(classYear,years,"-- সাল নির্বাচন করুন --");
-  fillSelect(listYear,years,"-- সাল নির্বাচন করুন --");
-  fillSelect(listExam,examOptions,"-- পরীক্ষা নির্বাচন করুন --");
-  resetPersonal(false);
-  resetClassWise(false);
+function renderNotices(){document.querySelector('#noticeRows').innerHTML=notices.map(x=>`<article class="notice"><h3>${esc(x.title)}</h3><p>${esc(x.description)}</p><small>${x.publish_date||''}</small></article>`).join('')||'<p>এখনও কোনো প্রকাশিত নোটিশ নেই।</p>';}
+function fillYears(){document.querySelector('#yearSelect').innerHTML='<option value="all">সকল বছর</option>'+annual.map(x=>`<option value="${x.year}">${x.year}</option>`).join('');showYear('all');}
+function showYear(v){const rows=v==='all'?annual:annual.filter(x=>String(x.year)===String(v)); ['Deposit','Due','Profit','Expense','Investment'].forEach((k,i)=>document.querySelector('#annual'+k).textContent=money(rows.reduce((s,x)=>s+Number(x[['total_deposit','total_due','total_profit','total_expense','total_investment'][i]]||0),0)));}
+
+async function login(){
+  const email=document.querySelector('#adminEmail').value.trim(), password=document.querySelector('#adminPassword').value;
+  if(!email||!password){msg('ইমেইল ও পাসওয়ার্ড দিন।');return;}
+  const {error}=await sb.auth.signInWithPassword({email,password}); if(error){msg('লগইন ব্যর্থ: '+error.message);return;} await refreshAdmin(); msg('Admin লগইন সফল।',true);
 }
-function loadPersonalClasses(){
-  const y=yearSelect.value;
-  if(!y){
-    fillSelect(className,[],"-- আগে সাল নির্বাচন করুন --");
-    className.disabled=true;
-    return;
-  }
-  fillSelect(className,getClasses(y),"-- শ্রেণি নির্বাচন করুন --");
-  className.disabled=getClasses(y).length===0;
+async function logout(){await sb.auth.signOut();admin=false;show('#adminPanel',false);show('#loginBox',true);}
+async function refreshAdmin(){const {data:{session}}=await sb.auth.getSession(); if(!session){admin=false;show('#adminPanel',false);show('#loginBox',true);return;}
+  const {data,error}=await sb.from('admin_users').select('role').eq('user_id',session.user.id).maybeSingle();
+  admin=!error && data?.role==='admin'; show('#adminPanel',admin);show('#loginBox',!admin); if(admin) loadAdmin();
 }
-function resetPersonal(clearYear=true){
-  if(clearYear) yearSelect.value="";
-  fillSelect(exam,examOptions,"-- পরীক্ষা নির্বাচন করুন --");
-  fillSelect(className,[],"-- আগে সাল নির্বাচন করুন --");
-  className.disabled=true;
-  document.getElementById("classHelp").textContent="প্রথমে সাল নির্বাচন করুন";
-  document.getElementById("roll").value="";
+async function loadAdmin(){
+  const [m,p,pr,e,n]=await Promise.all([
+    sb.from('members').select('*').order('name'), sb.from('payments').select('*').order('year',{ascending:false}).order('month',{ascending:false}),
+    sb.from('profits').select('*').order('year',{ascending:false}), sb.from('expenses').select('*').order('year',{ascending:false}), sb.from('notices').select('*').order('publish_date',{ascending:false})
+  ]);
+  const err=[m,p,pr,e,n].find(x=>x.error);if(err){document.querySelector('#adminData').textContent='Admin ডাটা লোড হয়নি: '+err.error.message;return;}
+  document.querySelector('#adminMemberRows').innerHTML=(m.data||[]).map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.father_name||'-')}</td><td>${esc(x.mobile||'-')}</td><td>${x.status}</td></tr>`).join('')||'<tr><td colspan="4">কোনো সদস্য নেই</td></tr>';
+  document.querySelector('#memberSelect').innerHTML=(m.data||[]).filter(x=>x.status==='active').map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');
+  document.querySelector('#adminData').textContent=`Admin mode চালু। সদস্য: ${(m.data||[]).length}, জমার রেকর্ড: ${(p.data||[]).length}, লাভের বছর: ${(pr.data||[]).length}, খরচের রেকর্ড: ${(e.data||[]).length}, নোটিশ: ${(n.data||[]).length}`;
 }
-function resetClassWise(clearYear=true){
-  if(clearYear) classYear.value="";
-  fillSelect(classWiseExam,examOptions,"-- পরীক্ষা নির্বাচন করুন --");
-  classWiseExam.value="";
-  fillSelect(classWiseName,[],"-- আগে সাল নির্বাচন করুন --");
-  classWiseName.disabled=true;
-  classWiseResult.classList.add("hidden");
+async function addMember(){
+  const name=document.querySelector('#memberName').value.trim(); if(!name){msg('সদস্যের নাম দিন।');return;}
+  const {error}=await sb.from('members').insert({name,father_name:document.querySelector('#fatherName').value.trim()||null,mobile:document.querySelector('#mobile').value.trim()||null,join_date:document.querySelector('#joinDate').value||null,status:'active'});
+  if(error){msg(error.message);return;} msg('সদস্য যোগ হয়েছে।',true);document.querySelector('#memberForm').reset();await loadAdmin();await loadPublic();
 }
-
-yearSelect.addEventListener("change",loadPersonalClasses);
-classYear.addEventListener("change",()=>{
-  const y=classYear.value;
-  fillSelect(classWiseExam,examOptions,"-- পরীক্ষা নির্বাচন করুন --");
-  const classes=y?getClasses(y):[];
-  fillSelect(classWiseName,classes,y?"-- শ্রেণি নির্বাচন করুন --":"-- আগে সাল নির্বাচন করুন --");
-  classWiseName.disabled=classes.length===0;
-  classWiseResult.classList.add("hidden");
-});
-
-classWiseExam.addEventListener("change",()=>{
-  classWiseResult.classList.add("hidden");
-});
-
-classWiseName.addEventListener("change",()=>{
-  classWiseResult.classList.add("hidden");
-});
-
-function showPersonalResult(s){
-  currentPersonalStudent = s;
-  const rows=(s.subjects||[]).map((x,i)=>`<tr><td>${bnNum(i+1)}</td><td>${esc(x.name)}</td><td>${x.marks==='*'?'—':bnNum(x.marks)}</td></tr>`).join("");
-  const pos=typeof s.rank === "number" ? bnNum(s.rank) : esc(s.rank || "—");
-  const absent=s.grade==='অনুপস্থিত' || !(s.subjects||[]).some(x=>typeof x.marks==='number');
-  const status=absent ? '<span class="fail">অনুপস্থিত / অসম্পূর্ণ</span>' : (s.grade==='F' ? '<span class="fail">ফেল</span>' : '<span class="pass">উত্তীর্ণ</span>');
-  const total=s.total==null?'—':bnNum(s.total);
-  const avg=s.average==null?'—':bnNum(Number(s.average).toFixed(2));
-  const point=s.point==null?'—':bnNum(Number(s.point).toFixed(2));
-  resultArea.innerHTML=`
-    <div class="result-head"><img src="logo.jpg" alt="মাদ্রাসার লোগো"><div><h2>দারুন নাজাত আইডিয়াল মাদরাসা</h2><p>শিক্ষাবর্ষ: ${bnNum(s.year || "2026")} — ${esc(s.examBn || s.exam)} — ${esc(s.classBn || s.className)}</p></div></div>
-    <div class="student-info">
-      <div class="info-box"><small>পরীক্ষার্থীর নাম</small><strong>${esc(s.name)}</strong></div>
-      <div class="info-box"><small>শ্রেণি</small><strong>${esc(s.classBn || s.className)}</strong></div>
-      <div class="info-box"><small>রোল নম্বর</small><strong>${bnNum(s.roll)}</strong></div>
-    </div>
-    <div class="table-wrap"><table class="result-table">
-      <thead><tr><th>ক্রম</th><th>বিষয়</th><th>নম্বর</th></tr></thead><tbody>${rows}</tbody>
-    </table></div>
-    <div class="summary">
-      <div class="summary-box"><span>সর্বমোট নম্বর</span><strong>${total}</strong></div>
-      <div class="summary-box"><span>গড়</span><strong>${avg}</strong></div>
-      <div class="summary-box"><span>পয়েন্ট</span><strong>${point}</strong></div>
-      <div class="summary-box"><span>অবস্থান</span><strong>${pos}</strong></div>
-    </div>
-    <div class="result-status">গ্রেড: <b>${esc(s.grade||'—')}</b> &nbsp; | &nbsp; ফলাফল: ${status}</div>
-    <div class="print-row"><button class="print-btn" onclick="printResultArea()">🖨 ফলাফল প্রিন্ট / PDF</button></div>`;
-  resultArea.classList.remove("hidden");
-  resultArea.scrollIntoView({behavior:"smooth",block:"start"});
+async function addPayment(){
+  const member_id=document.querySelector('#memberSelect').value,year=Number(document.querySelector('#payYear').value),month=Number(document.querySelector('#payMonth').value),paid=Number(document.querySelector('#paidAmount').value||0),required=Number(document.querySelector('#requiredAmount').value||500);
+  if(!member_id||!year||!month){msg('সদস্য, বছর ও মাস নির্বাচন করুন।');return;}
+  const {error}=await sb.from('payments').upsert({member_id,year,month,required_amount:required,paid_amount:paid,due_amount:Math.max(required-paid,0),payment_date:document.querySelector('#paymentDate').value||nowDate()},{onConflict:'member_id,year,month'});
+  if(error){msg(error.message);return;}msg('জমার তথ্য সংরক্ষণ হয়েছে।',true);document.querySelector('#paymentForm').reset();await loadAdmin();await loadPublic();
 }
+async function addProfit(){const year=Number(document.querySelector('#profitYear').value),total_profit=Number(document.querySelector('#profitAmount').value||0);const {error}=await sb.from('profits').upsert({year,total_profit},{onConflict:'year'});if(error){msg(error.message);return;}msg('লাভ সংরক্ষণ হয়েছে।',true);document.querySelector('#profitForm').reset();await loadAdmin();await loadPublic();}
+async function addExpense(){const year=Number(document.querySelector('#expenseYear').value),amount=Number(document.querySelector('#expenseAmount').value||0),description=document.querySelector('#expenseDesc').value.trim();const {error}=await sb.from('expenses').insert({year,date:document.querySelector('#expenseDate').value||nowDate(),description,amount});if(error){msg(error.message);return;}msg('খরচ সংরক্ষণ হয়েছে।',true);document.querySelector('#expenseForm').reset();await loadAdmin();await loadPublic();}
+async function addNotice(){const title=document.querySelector('#noticeTitle').value.trim(),description=document.querySelector('#noticeDesc').value.trim();const {error}=await sb.from('notices').insert({title,description,publish_date:document.querySelector('#noticeDate').value||nowDate(),status:'published'});if(error){msg(error.message);return;}msg('নোটিশ প্রকাশ হয়েছে।',true);document.querySelector('#noticeForm').reset();await loadAdmin();await loadPublic();}
 
-form.addEventListener("submit",e=>{
-  e.preventDefault();
-  resultArea.classList.add("hidden"); message.className="message hidden";
-  const y=yearSelect.value, ev=exam.value, cv=className.value, roll=document.getElementById("roll").value.trim();
-  if(!y||!ev||!cv||!roll){message.textContent="অনুগ্রহ করে সাল, পরীক্ষা, শ্রেণি ও রোল নম্বর পূরণ করুন।";message.className="message error";return;}
-  const s=students.find(x=>String(x.year||"")===y&&x.exam===ev&&x.className===cv&&String(x.roll)===roll);
-  if(!s){message.textContent="দুঃখিত! এই তথ্য অনুযায়ী কোনো ফলাফল পাওয়া যায়নি।";message.className="message error";return;}
-  message.textContent="ফলাফল পাওয়া গেছে।";message.className="message success";showPersonalResult(s);
-});
+document.querySelector('#search')?.addEventListener('input',renderMembers);document.querySelector('#yearSelect')?.addEventListener('change',e=>showYear(e.target.value));
+document.querySelector('#loginBtn')?.addEventListener('click',login);document.querySelector('#logoutBtn')?.addEventListener('click',logout);
+document.querySelector('#memberForm')?.addEventListener('submit',e=>{e.preventDefault();addMember()});document.querySelector('#paymentForm')?.addEventListener('submit',e=>{e.preventDefault();addPayment()});document.querySelector('#profitForm')?.addEventListener('submit',e=>{e.preventDefault();addProfit()});document.querySelector('#expenseForm')?.addEventListener('submit',e=>{e.preventDefault();addExpense()});document.querySelector('#noticeForm')?.addEventListener('submit',e=>{e.preventDefault();addNotice()});
 
-form.addEventListener("reset",()=>setTimeout(()=>{
-  resetPersonal(true); message.className="message hidden"; resultArea.classList.add("hidden");
-},0));
-
-function resetListForm(){
-  listType.value="";
-  listYear.value="";
-  fillSelect(listExam,examOptions,"-- পরীক্ষা নির্বাচন করুন --");
-  listExam.value="";
-  aplusMeta.innerHTML="";
-  aplusResult.innerHTML="";
-  aplusResult.classList.add("hidden");
-  listPrintRow.classList.add("hidden");
-}
-
-function showListResult(){
-  const type=listType.value, y=listYear.value, ev=listExam.value;
-  aplusMeta.innerHTML="";
-  aplusResult.innerHTML="";
-  aplusResult.classList.add("hidden");
-  listPrintRow.classList.add("hidden");
-  if(!type||!y||!ev) return;
-
-  const base=students.filter(s=>String(s.year||"")===String(y)&&s.exam===ev);
-
-  // উভয় তালিকায় শ্রেণির নির্দিষ্ট ক্রম বজায় থাকবে।
-  const classOrder=["Class-1","Class-2","Class-3","Class-4","Class-5","Class-6","Narsari","Hifz"];
-  const classRank=new Map(classOrder.map((c,i)=>[c,i]));
-
-  function sortWithinClass(a,b){
-    const aa=Number(a.average)||0, ab=Number(b.average)||0;
-    if(ab!==aa) return ab-aa;
-    const ta=Number(a.total)||0, tb=Number(b.total)||0;
-    if(tb!==ta) return tb-ta;
-    return String(a.name||"").localeCompare(String(b.name||""),'bn');
-  }
-
-  let list=[];
-  if(type==="aplus"){
-    list=base.filter(s=>String(s.grade||"").trim().toUpperCase()==="A+")
-      .sort((a,b)=>{
-        const ca=classRank.has(a.className)?classRank.get(a.className):999;
-        const cb=classRank.has(b.className)?classRank.get(b.className):999;
-        if(ca!==cb) return ca-cb;
-        return sortWithinClass(a,b);
-      });
-  }else{
-    list=base.filter(s=>typeof s.average==='number' && isFinite(s.average) && s.grade!=="অনুপস্থিত")
-      .sort((a,b)=>{
-        const ca=classRank.has(a.className)?classRank.get(a.className):999;
-        const cb=classRank.has(b.className)?classRank.get(b.className):999;
-        if(ca!==cb) return ca-cb;
-        return sortWithinClass(a,b);
-      });
-  }
-
-  const title=type==="aplus" ? "A+ প্রাপ্তদের তালিকা" : "মেধা তালিকা";
-  aplusMeta.innerHTML=`
-    <span>${title}: <b>${bnNum(list.length)}</b> জন</span>
-    <span>শিক্ষাবর্ষ: <b>${bnNum(y)}</b></span>
-    <span>পরীক্ষা: <b>${esc((base[0]?.examBn)||ev)}</b></span>`;
-
-  if(!list.length){
-    aplusResult.innerHTML=`<div class="classwise-empty">দুঃখিত! নির্বাচিত সাল ও পরীক্ষার জন্য কোনো ${type==="aplus"?"A+ প্রাপ্ত পরীক্ষার্থীর":"মেধা তালিকার"} তথ্য পাওয়া যায়নি।</div>`;
-    aplusResult.classList.remove("hidden");
-    return;
-  }
-
-  let rows;
-  if(type==="aplus"){
-    rows=list.map((s,i)=>`<tr>
-      <td><strong>${bnNum(i+1)}</strong></td>
-      <td class="aplus-student-name">${esc(s.name||"—")}</td>
-      <td>${esc(s.classBn||s.className||"—")}</td>
-      <td>${s.total==null?"—":bnNum(s.total)}</td>
-      <td>${s.average==null?"—":bnNum(Number(s.average).toFixed(2))}</td>
-      <td>${s.point==null?"—":bnNum(Number(s.point).toFixed(2))}</td>
-      <td><strong class="aplus-grade">${esc(s.grade||"A+")}</strong></td>
-    </tr>`).join("");
-  }else{
-    rows=list.map((s,i)=>`<tr>
-      <td><strong>${bnNum(i+1)}</strong></td>
-      <td class="aplus-student-name">${esc(s.name||"—")}</td>
-      <td>${esc(s.classBn||s.className||"—")}</td>
-      <td>${s.total==null?"—":bnNum(s.total)}</td>
-      <td>${s.average==null?"—":bnNum(Number(s.average).toFixed(2))}</td>
-      <td>${esc(s.grade||"—")}</td>
-      <td>${s.point==null?"—":bnNum(Number(s.point).toFixed(2))}</td>
-    </tr>`).join("");
-  }
-
-  const headers=type==="aplus"
-    ? ["ক্রমিক নং","পরীক্ষার্থীর নাম","শ্রেণী","মোট নম্বর","গড়","পয়েন্ট","গ্রেড"]
-    : ["ক্রমিক নং","পরীক্ষার্থীর নাম","শ্রেণী","মোট নম্বর","গড়","গ্রেড","পয়েন্ট"];
-  aplusResult.innerHTML=`<table class="aplus-table">
-    <thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
-  aplusResult.classList.remove("hidden");
-  listPrintRow.classList.remove("hidden");
-  aplusPanel.scrollIntoView({behavior:"smooth",block:"start"});
-}
-
-function showClassWiseResult(){
-  const y=classYear.value, ev=classWiseExam.value, c=classWiseName.value;
-  classWiseResult.classList.add("hidden");
-  if(!y||!ev||!c){return;}
-
-  const list=students.filter(s=>String(s.year||"")===y&&s.exam===ev&&s.className===c);
-  if(!list.length){
-    classWiseResult.innerHTML='<div class="classwise-empty">দুঃখিত! এই সাল ও শ্রেণির কোনো ফলাফল পাওয়া যায়নি।</div>';
-    classWiseResult.classList.remove("hidden");
-    return;
-  }
-
-  const f=list[0];
-
-  // এই শ্রেণির সব শিক্ষার্থীর subject list থেকে কলাম তৈরি হবে।
-  const subjectNames=[];
-  list.forEach(s=>(s.subjects||[]).forEach(x=>{
-    const name=String(x.name||"").trim();
-    if(name && !subjectNames.includes(name)) subjectNames.push(name);
-  }));
-
-  const headers=["ক্রম","শিক্ষার্থীর নাম",...subjectNames,"মোট","গড়","গ্রেড","অবস্থান"];
-
-  const rows=list.map((s,i)=>{
-    const marks={};
-    (s.subjects||[]).forEach(x=>{
-      const n=String(x.name||"").trim();
-      if(n) marks[n]=x.marks;
-    });
-
-    const subjectCells=subjectNames.map(n=>{
-      const v=marks[n];
-      return `<td>${v==null||v===""||v==="*"?"—":bnNum(v)}</td>`;
-    }).join("");
-
-    return `<tr>
-      <td>${bnNum(i+1)}</td>
-      <td class="student-name">${esc(s.name)}</td>
-      ${subjectCells}
-      <td>${s.total==null?"—":bnNum(s.total)}</td>
-      <td>${s.average==null?"—":bnNum(Number(s.average).toFixed(2))}</td>
-      <td>${esc(s.grade||"—")}</td>
-      <td>${typeof s.rank==="number"?bnNum(s.rank):esc(s.rank||"—")}</td>
-    </tr>`;
-  }).join("");
-
-  const headHtml=`
-    <div class="classwise-head">
-      <img src="logo.jpg" alt="মাদ্রাসার লোগো">
-      <div>
-        <h2>${esc(f.classBn||f.className)} — শ্রেণিভিত্তিক ফলাফল</h2>
-        <p>শিক্ষাবর্ষ: ${bnNum(y)} — ${esc(f.examBn||f.exam)}</p>
-      </div>
-    </div>`;
-
-  const tableHtml=`
-    <div class="table-wrap classwise-print-table-wrap">
-      <table class="result-table classwise-table">
-        <thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`;
-
-  classWiseResult.innerHTML=`
-    ${headHtml}
-    ${tableHtml}
-    <div class="print-row">
-      <button class="print-btn" onclick="printClassWiseResult()">🖨 ফলাফল প্রিন্ট / PDF</button>
-    </div>`;
-
-  classWiseResult.classList.remove("hidden");
-  classWiseResult.scrollIntoView({behavior:"smooth",block:"start"});
-}
-
-function buildPersonalPrintSheet(s){
-  const rows=(s.subjects||[]).map(x=>{
-    const marks=x.marks==='*' ? '—' : bnNum(x.marks);
-    return `<tr><td class="subject-name">${esc(x.name||'—')}</td><td>${marks}</td></tr>`;
-  }).join("");
-  const pos=typeof s.rank === "number" ? bnNum(s.rank) : esc(s.rank || "—");
-  const absent=s.grade==='অনুপস্থিত' || !(s.subjects||[]).some(x=>typeof x.marks==='number');
-  const status=absent ? 'অনুপস্থিত / অসম্পূর্ণ' : (s.grade==='F' ? 'ফেল' : 'উত্তীর্ণ');
-  const grade=esc(s.grade||'—');
-  const total=s.total==null?'—':bnNum(s.total);
-  const avg=s.average==null?'—':bnNum(Number(s.average).toFixed(2));
-  const point=s.point==null?'—':bnNum(Number(s.point).toFixed(2));
-  return `
-  <div class="print-sheet personal-print-sheet">
-    <div class="print-decor top"></div>
-    <div class="print-header">
-      <div class="print-logo-wrap"><img src="logo.jpg" alt="মাদ্রাসার লোগো"></div>
-      <div class="print-title">
-        <h1>দারুন নাজাত আইডিয়াল মাদরাসা</h1>
-        <h2>পরীক্ষার ফলাফল</h2>
-        <p>আবুতোরাব, মিরসরাই, চট্টগ্রাম</p>
-        <p>শিক্ষাবর্ষ: ${bnNum(s.year||'2026')} — ${esc(s.examBn||s.exam||'')}</p>
-      </div>
-      <div class="print-seal">RESULT</div>
-    </div>
-    <div class="print-student-title">শিক্ষার্থীর ফলাফল বিবরণী</div>
-    <div class="print-meta-row">
-      <div><span>পরীক্ষার্থীর নাম</span><strong>${esc(s.name||'—')}</strong></div>
-      <div><span>শ্রেণি</span><strong>${esc(s.classBn||s.className||'—')}</strong></div>
-      <div><span>রোল নম্বর</span><strong>${bnNum(s.roll)}</strong></div>
-      <div><span>অবস্থান</span><strong>${pos}</strong></div>
-    </div>
-    <div class="print-body-grid">
-      <div class="print-subject-area">
-        <div class="print-section-label">বিষয়ভিত্তিক ফলাফল</div>
-        <table class="result-table print-result-table">
-          <thead><tr><th>বিষয়</th><th>নম্বর</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      <div class="grade-chart">
-        <div class="grade-chart-title">ফলাফলের সারাংশ</div>
-        <div class="grade-highlight"><span>গ্রেড</span><b>${grade}</b></div>
-        <div class="mini-stat"><span>মোট</span><strong>${total}</strong></div>
-        <div class="mini-stat"><span>গড়</span><strong>${avg}</strong></div>
-        <div class="mini-stat"><span>পয়েন্ট</span><strong>${point}</strong></div>
-      </div>
-    </div>
-    <div class="print-status ${s.grade==='F'||absent?'bad':'good'}">ফলাফল: <b>${status}</b></div>
-    <div class="print-footer-note">দারুন নাজাত আইডিয়াল মাদরাসা — ফলাফল প্রকাশনা</div>
-    <div class="print-signatures"><span>শ্রেণি শিক্ষক</span><span>পরীক্ষা নিয়ন্ত্রক</span><span>অধ্যক্ষ</span></div>
-    <div class="print-decor bottom"></div>
-  </div>`;
-}
-
-function openPrintWindow(htmlContent,title,orientation="portrait"){
-  const win=window.open("", "_blank");
-  if(!win){
-    // Popup blocked হলে স্বাভাবিক print fallback।
-    window.print();
-    return;
-  }
-
-  const links=Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
-    .map(l=>`<link rel="stylesheet" href="${l.href}">`).join("");
-
-  win.document.open();
-  win.document.write(`<!doctype html>
-<html lang="bn">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)}</title>
-${links}
-<style>
-@page{size:A4 ${orientation};margin:8mm}
-@page classwisePage{size:A4 landscape;margin:7mm}
-html,body{background:#fff!important;color:#111!important;margin:0!important;padding:0!important}
-body{font-family:'Noto Sans Bengali',Arial,sans-serif!important}
-.result-head,.classwise-head{break-inside:avoid}
-.table-wrap{overflow:visible!important}
-.result-table{width:100%!important;border-collapse:collapse!important}
-.result-table th,.result-table td{border:1px solid #222!important}
-.print-row{display:none!important}
-@media print{
-  .result-card,.info-card,.contact-card,footer,.top-header,.print-row{display:none!important}
-}
-</style>
-</head>
-<body>
-${htmlContent}
-<script>
-(function(){
-  function doPrint(){
-    try{window.focus();window.print();}catch(e){}
-  }
-  if(document.readyState==="complete"){setTimeout(doPrint,500);}
-  else{window.addEventListener("load",function(){setTimeout(doPrint,500);});}
-})();
-<\/script>
-</body>
-</html>`);
-  win.document.close();
-}
-
-function printResultArea(){
-  if(!resultArea || resultArea.classList.contains("hidden") || !currentPersonalStudent) return;
-  openPrintWindow(buildPersonalPrintSheet(currentPersonalStudent),"ব্যক্তিগত ফলাফল");
-}
-
-function printClassWiseResult(){
-  if(!classWiseResult || classWiseResult.classList.contains("hidden")) return;
-  openPrintWindow(classWiseResult.innerHTML,"শ্রেণিভিত্তিক ফলাফল","landscape");
-}
-
-function printAPlusResult(){
-  if(!aplusPanel || aplusPanel.classList.contains("hidden")) return;
-  const title=listType.value==="merit" ? "মেধা তালিকা" : "A+ প্রাপ্তদের তালিকা";
-  openPrintWindow(aplusPanel.innerHTML,title,"landscape");
-}
-
-listForm.addEventListener("submit",e=>{
-  e.preventDefault();
-  if(!listType.value||!listYear.value||!listExam.value){
-    aplusResult.innerHTML='<div class="classwise-empty">অনুগ্রহ করে তালিকা, সাল ও পরীক্ষা নির্বাচন করুন।</div>';
-    aplusResult.classList.remove("hidden");
-    return;
-  }
-  showListResult();
-});
-
-listType.addEventListener("change",()=>{ aplusResult.classList.add("hidden"); aplusMeta.innerHTML=""; listPrintRow.classList.add("hidden"); });
-listYear.addEventListener("change",()=>{ fillSelect(listExam,examOptions,"-- পরীক্ষা নির্বাচন করুন --"); aplusResult.classList.add("hidden"); aplusMeta.innerHTML=""; listPrintRow.classList.add("hidden"); });
-listExam.addEventListener("change",()=>{ aplusResult.classList.add("hidden"); aplusMeta.innerHTML=""; listPrintRow.classList.add("hidden"); });
-
-document.getElementById("classWiseForm").addEventListener("submit",e=>{
-  e.preventDefault();
-  const y=classYear.value, ev=classWiseExam.value, c=classWiseName.value;
-  if(!y||!ev||!c){
-    classWiseResult.innerHTML='<div class="classwise-empty">অনুগ্রহ করে সাল, পরীক্ষা ও শ্রেণি নির্বাচন করুন।</div>';
-    classWiseResult.classList.remove("hidden");
-    return;
-  }
-  showClassWiseResult();
-});
-
-document.querySelectorAll("[data-view]").forEach(link=>link.addEventListener("click",e=>{
-  e.preventDefault();
-  const view=link.dataset.view;
-
-  personalPanel.classList.add("hidden");
-  classPanel.classList.add("hidden");
-  aplusPanel.classList.add("hidden");
-  resultArea.classList.add("hidden");
-
-  if(view==="personal"){
-    personalPanel.classList.remove("hidden");
-  }else if(view==="classwise"){
-    classPanel.classList.remove("hidden");
-  }else if(view==="aplus"){
-    resetListForm();
-    aplusPanel.classList.remove("hidden");
-  }
-
-  closeMenu();
-  window.scrollTo({top:0,behavior:"smooth"});
-}));
-
-function openMenu(){ menu.classList.add("open"); overlay.classList.add("show"); document.body.classList.add("menu-open"); }
-function closeMenu(){ menu.classList.remove("open"); overlay.classList.remove("show"); document.body.classList.remove("menu-open"); }
-document.getElementById("menuBtn").addEventListener("click",openMenu);
-document.getElementById("menuClose").addEventListener("click",closeMenu);
-overlay.addEventListener("click",closeMenu);
-
-document.querySelectorAll("#mobileMenu a").forEach(a=>a.addEventListener("click",closeMenu));
-loadResultData();
+document.querySelector('#payYear').value=new Date().getFullYear();document.querySelector('#profitYear').value=new Date().getFullYear();document.querySelector('#expenseYear').value=new Date().getFullYear();
+loadPublic(); if(sb) sb.auth.onAuthStateChange(()=>setTimeout(refreshAdmin,0)); refreshAdmin();
